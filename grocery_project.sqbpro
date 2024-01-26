@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?><sqlb_project><db path="C:/Users/hp/Desktop/ecomm_data/ecomm_data" readonly="0" foreign_keys="1" case_sensitive_like="0" temp_store="0" wal_autocheckpoint="1000" synchronous="2"/><attached/><window><main_tabs open="structure browser pragmas query" current="3"/></window><tab_structure><column_width id="0" width="300"/><column_width id="1" width="0"/><column_width id="2" width="100"/><column_width id="3" width="1161"/><column_width id="4" width="0"/><expanded_item id="0" parent="1"/><expanded_item id="1" parent="1"/><expanded_item id="2" parent="1"/><expanded_item id="3" parent="1"/></tab_structure><tab_browse><current_table name="4,9:maintrans_dim"/><default_encoding codec=""/><browse_table_settings><table schema="main" name="Trans_dim" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_"><sort/><column_widths><column index="1" value="108"/><column index="2" value="292"/><column index="3" value="109"/><column index="4" value="109"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table><table schema="main" name="customer_dim" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_"><sort><column index="1" mode="0"/></sort><column_widths><column index="1" value="108"/><column index="2" value="292"/><column index="3" value="109"/><column index="4" value="109"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table><table schema="main" name="fact_table" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_"><sort><column index="1" mode="0"/></sort><column_widths><column index="1" value="96"/><column index="2" value="108"/><column index="3" value="67"/><column index="4" value="67"/><column index="5" value="74"/><column index="6" value="63"/><column index="7" value="49"/><column index="8" value="73"/><column index="9" value="79"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table><table schema="main" name="item_dim" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_"><sort/><column_widths><column index="1" value="67"/><column index="2" value="258"/><column index="3" value="171"/><column index="4" value="73"/><column index="5" value="94"/><column index="6" value="214"/><column index="7" value="49"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table><table schema="main" name="store_dim" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_"><sort/><column_widths><column index="1" value="74"/><column index="2" value="84"/><column index="3" value="121"/><column index="4" value="169"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table><table schema="main" name="time_dim" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_"><sort/><column_widths><column index="1" value="67"/><column index="2" value="110"/><column index="3" value="40"/><column index="4" value="40"/><column index="5" value="64"/><column index="6" value="49"/><column index="7" value="58"/><column index="8" value="40"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table><table schema="main" name="trans_dim" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_"><sort/><column_widths><column index="1" value="96"/><column index="2" value="81"/><column index="3" value="300"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table></browse_table_settings></tab_browse><tab_sql><sql name="Trend">--TREND
+SELECT 
+	td.year,
+	td.quarter,
+	td.month,
+	SUM(ft.total_price)
+FROM fact_table ft
+JOIN time_dim td ON ft.time_key = td.time_key
+GROUP BY 3,1
+ORDER BY 1,2,3
+</sql><sql name="RFM_cust">--Let's do RFM Model !
+-- Find customer life time in this company and Find Recency (R) ,purchase times (F)and total amount (M)
+SELECT 
+	ft.customer_key AS cust_id,
+	COUNT(*) AS purchase_times, -- (F)
+	SUM(ft.total_price) AS total_amount, -- (M)
+	MAX(td.date) AS recent_sale_date,
+	MIN(td.date) AS start_sale_date,
+	julianday(MAX(td.date)) - julianday(MIN(td.date)) AS cust_age,
+	julianday('2021-02-01') - julianday(MAX(td.date)) AS day_since_last_visit -- (R)
+FROM fact_table ft
+JOIN time_dim td ON ft.time_key = td.time_key 
+GROUP BY 1
+
+-- Let's give it a score for RFM Model
+WITH rfmtable (cust_id, cust_age_date,r_score,f_score,m_score) AS(
+WITH scorerfm (cust_id, purchase_times,total_amount,day_since_last_visit,cust_age_date) AS(
+	SELECT
+		ft.customer_key AS cust_id,
+		COUNT(*) AS purchase_times,  -- F
+		SUM(ft.total_price) AS total_amount, -- M
+		julianday('2021-02-01') - julianday(MAX(td.date)) AS day_since_last_visit, -- R
+		CAST(julianday(MAX(td.date)) - julianday(MIN(td.date)) AS INT) AS cust_age_date
+	FROM fact_table ft
+	JOIN time_dim td ON ft.time_key = td.time_key
+	GROUP BY 1
+)
+SELECT -- Give score By Ntile
+	cust_id,
+	cust_age_date,
+	NTILE(5)OVER(ORDER BY day_since_last_visit) AS r_score,
+	NTILE(5)OVER(ORDER BY purchase_times) AS f_score,
+	NTILE(5)OVER(ORDER BY total_amount) AS m_score
+FROM scorerfm
+--ORDER BY 1
+)
+SELECT *,
+	CASE -- Segmentation by Score
+		WHEN (f_score+m_score)/2 &gt;= 3 AND r_score &gt;= 3 THEN &quot;Champion&quot;
+		WHEN (f_score+m_score)/2 &lt; 3 AND r_score &gt;= 3 THEN &quot;Potential_customer&quot;
+		WHEN (f_score+m_score)/2 &gt;= 3 AND r_score &lt; 3 THEN &quot;Can't_loose&quot;
+		WHEN (f_score+m_score)/2 &lt; 3 AND r_score &lt; 3 THEN &quot;lost&quot;
+		ELSE &quot;Error&quot;
+	END AS status
+FROM rfmtable
+ORDER BY 1</sql><sql name="Item_analysis">--Analysis cat hero
+WITH catperoverall (item_cat,total_sales,percent_catsaleperoverall) AS (
+SELECT
+	id.desc AS item_cat,
+	SUM(ft.quantity) AS total_sales,
+	(SUM(ft.total_price)/(SELECT SUM(ft1.total_price) FROM fact_table ft1)) * 100 AS percent_catsaleperoverall
+FROM fact_table ft
+JOIN item_dim id ON ft.item_key = id.item_key
+GROUP BY 1
+)
+--Analysis item hero
+SELECT
+	ft.item_key AS item_id,
+	id.desc AS item_cat,
+	ft.unit_price AS price,
+	SUM(ft.quantity) AS total_sales,
+	SUM(ft.total_price) AS total_amount,
+	(SUM(ft.total_price)/(SELECT SUM(ft2.total_price) OVER (PARTITION BY id.desc) FROM fact_table ft2 JOIN item_dim id ON ft2.item_key = id.item_key)) * 100 AS percent_sale_cat,
+	percent_catsaleperoverall,
+	(SUM(ft.total_price)/(SELECT SUM(ft1.total_price) FROM fact_table ft1)) * 100 AS percent_sales_overall
+FROM fact_table ft
+JOIN item_dim id ON ft.item_key = id.item_key
+JOIN catperoverall cpoa ON id.desc = cpoa.item_cat
+GROUP BY 1,2
+ORDER BY 5 DESC, 2</sql><sql name="Location">-- for scatter chart
+SELECT
+	ft.store_key,
+	sd.division,
+	sd.district,
+	td.year,
+	td.quarter,
+	td.month,
+	SUM(ft.total_price)
+FROM fact_table ft
+JOIN store_dim sd ON ft.store_key = sd.store_key
+JOIN time_dim td ON ft.time_key = td.time_key
+GROUP BY ft.store_key,td.month
+</sql><sql name="payment">SELECT
+	trd.trans_type,
+	SUM(ft.total_price) AS amount,
+	ROUND((SUM(ft.total_price)/(SELECT SUM(ft1.total_price) FROM fact_table ft1)) * 100,1) AS percent,
+	COUNT(*) AS total_transaction
+FROM fact_table ft
+JOIN trans_dim trd ON ft.payment_key = trd.payment_key
+GROUP BY 1
+ORDER BY percent DESC</sql><sql name="Solution">-- Find my behavior about shopping frequency
+
+WITH lagdate (cust_id, date_visit,last_time_visit,day_between_visit)
+	AS
+	(SELECT 
+	ft.customer_key AS cust_id,
+	td.date AS date_visit,
+	LAG(td.date) OVER (PARTITION BY ft.customer_key ORDER BY td.date) AS last_time_visit,
+	JULIANDAY(td.date) - JULIANDAY(LAG(td.date) OVER (PARTITION BY ft.customer_key ORDER BY td.date)) AS day_between_visit
+	-- NTILE (5) OVER (ORDER BY td.date) AS 
+FROM fact_table ft
+JOIN time_dim td ON ft.time_key = td.time_key
+)
+SELECT
+	--cust_id,
+	ROUND(AVG(day_between_visit),0) AS avg_day_visit
+	--MAX(day_between_visit) AS longest_visit
+FROM lagdate
+WHERE last_time_visit NOT NULL
+--GROUP BY cust_id
+--ORDER BY 1,2
+</sql><current_tab id="5"/></tab_sql></sqlb_project>
